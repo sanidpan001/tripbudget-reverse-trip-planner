@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TripBudget — Reverse Trip Planner | Travel Budget Calculator for 60 Destinations</title>
+<meta name="description" content="TripBudget is a free reverse trip planner and travel budget calculator: enter your budget and trip length, and instantly see which of 60 destinations you can afford, with cost breakdowns, flight-budget splitting, and a savings planner.">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        deep: '#081c1a',
+        deep2: '#0b2422',
+        deep3: '#0f2e2b',
+        tealx: '#2dd4bf',
+        amberx: '#fbbf24',
+      },
+      fontFamily: {
+        display: ['"Segoe UI"', 'system-ui', 'sans-serif'],
+      }
+    }
+  }
+}
+</script>
+<style>
+  body { background-color: #081c1a; }
+  .compass-bg {
+    background-image: radial-gradient(circle at 20% 10%, rgba(45,212,191,0.08) 0, transparent 34%),
+                      radial-gradient(circle at 85% 85%, rgba(251,191,36,0.06) 0, transparent 30%);
+  }
+  .glass { background: rgba(15,46,43,0.72); backdrop-filter: blur(10px); }
+  .glow-teal { box-shadow: 0 0 32px rgba(45,212,191,0.16); }
+  .bar-track { background: rgba(148,163,184,0.16); }
+  details.faq summary { cursor: pointer; list-style: none; }
+  details.faq summary::-webkit-details-marker { display: none; }
+  details.faq summary::after { content: '+'; float: right; color: #fbbf24; font-weight: 700; font-size: 1.25rem; }
+  details.faq[open] summary::after { content: '–'; }
+  details.faq[open] { border-color: rgba(45,212,191,0.5); }
+  input, select { color-scheme: dark; }
+  input:focus, select:focus { outline: 2px solid #2dd4bf; outline-offset: 1px; }
+  input[type="range"] { accent-color: #2dd4bf; }
+  @media print { .no-print { display: none !important; } }
+  .board-row { transition: transform .15s ease, border-color .15s ease; }
+  .board-row:hover { transform: translateX(4px); }
+  .switch { position: relative; width: 46px; height: 26px; appearance: none; -webkit-appearance: none;
+            background: rgba(148,163,184,0.25); border-radius: 9999px; cursor: pointer; transition: background .2s; flex-shrink: 0; }
+  .switch:checked { background: #2dd4bf; }
+  .switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+                   background: #fff; border-radius: 9999px; transition: left .2s; }
+  .switch:checked::after { left: 23px; }
+  .switch:focus { outline: 2px solid #fbbf24; outline-offset: 2px; }
+</style>
+<script id="v3-tripbudget-reverse-trip-planner-lib">
+/* TripBudget v3 — reverse trip planner: pure logic, no DOM access.
+   ---------------------------------------------------------------------------
+   All daily costs are ESTIMATES compiled from public travel-cost knowledge
+   (mid-range traveler: 3-star hotel or good guesthouse, mix of local and
+   mid-range food, public transport + occasional taxi, roughly one paid
+   activity per day). Values are rounded to the nearest $5 and are NOT live
+   prices or quotes. Every figure this tool produces is an approximation for
+   planning — mark-up a 15% error-margin buffer before you book. */
+
+var TRIPBUDGET_VERSION = '3.0.0';
+
+/* Optional error-margin buffer applied to daily costs (15%). */
+var TRIPBUDGET_BUFFER = 0.15;
+
+/* Per-day spend split of the daily estimate (planning shares). */
+var TRIPBUDGET_SPEND_SHARES = { stay: 0.42, food: 0.30, transport: 0.13, activities: 0.15 };
+
+/* 60 destinations: n = name, c = country, r = region, d = est. daily cost USD. */
+var TRIPBUDGET_DESTINATIONS = [
+  { n: 'Bangkok', c: 'Thailand', r: 'Asia', d: 65 },
+  { n: 'Chiang Mai', c: 'Thailand', r: 'Asia', d: 50 },
+  { n: 'Hanoi', c: 'Vietnam', r: 'Asia', d: 45 },
+  { n: 'Ho Chi Minh City', c: 'Vietnam', r: 'Asia', d: 48 },
+  { n: 'Bali', c: 'Indonesia', r: 'Asia', d: 70 },
+  { n: 'Jakarta', c: 'Indonesia', r: 'Asia', d: 55 },
+  { n: 'Kuala Lumpur', c: 'Malaysia', r: 'Asia', d: 60 },
+  { n: 'Manila', c: 'Philippines', r: 'Asia', d: 55 },
+  { n: 'Siem Reap', c: 'Cambodia', r: 'Asia', d: 45 },
+  { n: 'Colombo', c: 'Sri Lanka', r: 'Asia', d: 50 },
+  { n: 'Kathmandu', c: 'Nepal', r: 'Asia', d: 40 },
+  { n: 'Pokhara', c: 'Nepal', r: 'Asia', d: 38 },
+  { n: 'Dhaka', c: 'Bangladesh', r: 'Asia', d: 42 },
+  { n: 'Mumbai', c: 'India', r: 'Asia', d: 60 },
+  { n: 'Delhi', c: 'India', r: 'Asia', d: 55 },
+  { n: 'Jaipur', c: 'India', r: 'Asia', d: 48 },
+  { n: 'Vientiane', c: 'Laos', r: 'Asia', d: 42 },
+  { n: 'Phnom Penh', c: 'Cambodia', r: 'Asia', d: 45 },
+  { n: 'Yangon', c: 'Myanmar', r: 'Asia', d: 50 },
+  { n: 'Taipei', c: 'Taiwan', r: 'Asia', d: 85 },
+  { n: 'Tokyo', c: 'Japan', r: 'Asia', d: 150 },
+  { n: 'Seoul', c: 'South Korea', r: 'Asia', d: 120 },
+  { n: 'Lisbon', c: 'Portugal', r: 'Europe', d: 110 },
+  { n: 'Porto', c: 'Portugal', r: 'Europe', d: 95 },
+  { n: 'Prague', c: 'Czechia', r: 'Europe', d: 95 },
+  { n: 'Budapest', c: 'Hungary', r: 'Europe', d: 85 },
+  { n: 'Krakow', c: 'Poland', r: 'Europe', d: 80 },
+  { n: 'Athens', c: 'Greece', r: 'Europe', d: 105 },
+  { n: 'Madrid', c: 'Spain', r: 'Europe', d: 120 },
+  { n: 'Barcelona', c: 'Spain', r: 'Europe', d: 135 },
+  { n: 'Rome', c: 'Italy', r: 'Europe', d: 140 },
+  { n: 'Berlin', c: 'Germany', r: 'Europe', d: 130 },
+  { n: 'Paris', c: 'France', r: 'Europe', d: 180 },
+  { n: 'London', c: 'United Kingdom', r: 'Europe', d: 200 },
+  { n: 'Amsterdam', c: 'Netherlands', r: 'Europe', d: 165 },
+  { n: 'Vienna', c: 'Austria', r: 'Europe', d: 150 },
+  { n: 'Istanbul', c: 'Turkey', r: 'Europe', d: 90 },
+  { n: 'Mexico City', c: 'Mexico', r: 'Americas', d: 75 },
+  { n: 'Cancun', c: 'Mexico', r: 'Americas', d: 110 },
+  { n: 'Buenos Aires', c: 'Argentina', r: 'Americas', d: 65 },
+  { n: 'Lima', c: 'Peru', r: 'Americas', d: 60 },
+  { n: 'Cusco', c: 'Peru', r: 'Americas', d: 55 },
+  { n: 'Rio de Janeiro', c: 'Brazil', r: 'Americas', d: 80 },
+  { n: 'Bogota', c: 'Colombia', r: 'Americas', d: 55 },
+  { n: 'Cartagena', c: 'Colombia', r: 'Americas', d: 70 },
+  { n: 'San Jose', c: 'Costa Rica', r: 'Americas', d: 95 },
+  { n: 'Havana', c: 'Cuba', r: 'Americas', d: 70 },
+  { n: 'New York', c: 'United States', r: 'Americas', d: 220 },
+  { n: 'Los Angeles', c: 'United States', r: 'Americas', d: 190 },
+  { n: 'Toronto', c: 'Canada', r: 'Americas', d: 150 },
+  { n: 'Marrakech', c: 'Morocco', r: 'Africa', d: 65 },
+  { n: 'Cairo', c: 'Egypt', r: 'Africa', d: 60 },
+  { n: 'Cape Town', c: 'South Africa', r: 'Africa', d: 85 },
+  { n: 'Nairobi', c: 'Kenya', r: 'Africa', d: 75 },
+  { n: 'Zanzibar', c: 'Tanzania', r: 'Africa', d: 80 },
+  { n: 'Sydney', c: 'Australia', r: 'Oceania', d: 160 },
+  { n: 'Auckland', c: 'New Zealand', r: 'Oceania', d: 140 },
+  { n: 'Nadi', c: 'Fiji', r: 'Oceania', d: 110 },
+  { n: 'Dubai', c: 'UAE', r: 'Middle East', d: 160 },
+  { n: 'Doha', c: 'Qatar', r: 'Middle East', d: 150 }
+];
+
+/* Unique region list, in a stable display order. */
+function tripbudgetRegions() {
+  var order = ['Asia', 'Europe', 'Americas', 'Africa', 'Middle East', 'Oceania'];
+  var seen = {};
+  TRIPBUDGET_DESTINATIONS.forEach(function (x) { seen[x.r] = true; });
+  return order.filter(function (r) { return seen[r]; });
+}
+
+/* Daily cost with the optional 15% error-margin buffer applied. */
+function tripbudgetEffectiveDaily(daily, bufferOn) {
+  var d = Number(daily);
+  if (!isFinite(d) || d <= 0) return NaN;
+  var out = bufferOn ? d * (1 + TRIPBUDGET_BUFFER) : d;
+  return Math.round(out * 100) / 100; // cents: avoids FP dust like 114.9999999
+}
+
+/* Total on-ground trip cost for `days` days. NaN on bad input. */
+function tripbudgetTripCost(daily, days, bufferOn) {
+  var d = tripbudgetEffectiveDaily(daily, bufferOn);
+  var n = Math.floor(Number(days));
+  if (!isFinite(d) || !isFinite(n) || n <= 0) return NaN;
+  return d * n;
+}
+
+/* Whole days of travel the budget covers at a daily rate. 0 on bad input. */
+function tripbudgetDaysAffordable(budget, daily, bufferOn) {
+  var b = Number(budget);
+  var d = tripbudgetEffectiveDaily(daily, bufferOn);
+  if (!isFinite(b) || b <= 0 || !isFinite(d) || d <= 0) return 0;
+  return Math.max(0, Math.floor(b / d));
+}
+
+/* Per-category cost breakdown for a trip. Null on bad input. */
+function tripbudgetBreakdown(daily, days, bufferOn) {
+  var total = tripbudgetTripCost(daily, days, bufferOn);
+  if (!isFinite(total)) return null;
+  var s = TRIPBUDGET_SPEND_SHARES;
+  return {
+    stay: total * s.stay,
+    food: total * s.food,
+    transport: total * s.transport,
+    activities: total * s.activities,
+    total: total
+  };
+}
+
+/* Rank destinations by affordability for a budget + trip length.
+   opts: { bufferOn: bool, region: 'all' | region name }
+   Sorted by daysAffordable desc, then daily asc (cheapest first on ties).
+   Returns [] on invalid budget/days. */
+function tripbudgetRank(budget, days, opts) {
+  opts = opts || {};
+  var b = Number(budget);
+  var n = Math.floor(Number(days));
+  if (!isFinite(b) || b <= 0 || !isFinite(n) || n <= 0) return [];
+  var bufferOn = !!opts.bufferOn;
+  var region = opts.region || 'all';
+  var out = [];
+  TRIPBUDGET_DESTINATIONS.forEach(function (x) {
+    if (region !== 'all' && x.r !== region) return;
+    var eff = tripbudgetEffectiveDaily(x.d, bufferOn);
+    var cost = eff * n;
+    out.push({
+      name: x.n,
+      country: x.c,
+      region: x.r,
+      daily: x.d,
+      effectiveDaily: eff,
+      tripCost: cost,
+      daysAffordable: Math.max(0, Math.floor(b / eff)),
+      affordable: cost <= b,
+      leftover: b - cost
+    });
+  });
+  out.sort(function (a, z) {
+    if (z.daysAffordable !== a.daysAffordable) return z.daysAffordable - a.daysAffordable;
+    return a.daily - z.daily;
+  });
+  return out;
+}
+
+/* Split a total budget into flights vs on-ground spending. */
+function tripbudgetSplit(budget, flightCost) {
+  var b = Number(budget);
+  var f = Number(flightCost);
+  if (!isFinite(b) || b <= 0) return { ok: false, error: 'invalid_budget' };
+  if (!isFinite(f) || f < 0) return { ok: false, error: 'invalid_flight' };
+  if (f > b) return { ok: false, error: 'flight_exceeds_budget', budget: b, flightCost: f };
+  var pct = (f / b) * 100;
+  return {
+    ok: true,
+    budget: b,
+    flightCost: f,
+    groundBudget: b - f,
+    flightPct: pct,
+    groundPct: 100 - pct,
+    heavy: pct > 40
+  };
+}
+
+/* Savings plan: how much to save per day/week/month to hit a target by a date.
+   todayISO optional (defaults to now) — pass it in tests for determinism. */
+function tripbudgetSavings(target, saved, targetDateISO, todayISO) {
+  var t = Number(target);
+  var s = Number(saved);
+  if (!isFinite(t) || t <= 0) return { ok: false, error: 'invalid_target' };
+  if (!isFinite(s) || s < 0) return { ok: false, error: 'invalid_saved' };
+  var targetMs = Date.parse(targetDateISO);
+  var todayMs = todayISO ? Date.parse(todayISO) : Date.now();
+  if (!isFinite(targetMs) || !isFinite(todayMs)) return { ok: false, error: 'invalid_date' };
+  var daysLeft = Math.ceil((targetMs - todayMs) / 86400000);
+  var remaining = Math.max(0, t - s);
+  if (daysLeft <= 0) {
+    return { ok: false, error: daysLeft === 0 ? 'date_is_today' : 'date_in_past', remaining: remaining, daysLeft: daysLeft };
+  }
+  if (remaining <= 0) {
+    return { ok: true, done: true, target: t, saved: s, remaining: 0, daysLeft: daysLeft, perDay: 0, perWeek: 0, perMonth: 0 };
+  }
+  return {
+    ok: true,
+    done: false,
+    target: t,
+    saved: s,
+    remaining: remaining,
+    daysLeft: daysLeft,
+    perDay: remaining / daysLeft,
+    perWeek: remaining / (daysLeft / 7),
+    perMonth: remaining / (daysLeft / 30.4375)
+  };
+}
+
+/* Input validation for the main planner form. Returns an array of error codes. */
+function tripbudgetValidate(budget, days) {
+  var errs = [];
+  var b = Number(budget);
+  var n = Number(days);
+  if (!isFinite(b) || b <= 0) errs.push('invalid_budget');
+  if (!isFinite(n) || Math.floor(n) <= 0) errs.push('invalid_days');
+  return errs;
+}
+
+/* USD formatting helper (pure). */
+function tripbudgetFormatUSD(n) {
+  var x = Number(n);
+  if (!isFinite(x)) return '—';
+  var neg = x < 0;
+  var ax = Math.abs(x);
+  var str = ax < 100
+    ? ax.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : Math.round(ax).toLocaleString('en-US');
+  return (neg ? '-$' : '$') + str;
+}
+
+</script>
+</head>
+<body id="top" class="bg-deep text-slate-200 font-display min-h-screen compass-bg">
+
+<!-- ============ STICKY HEADER ============ -->
+<header class="no-print sticky top-0 z-50 bg-deep/90 backdrop-blur border-b border-tealx/20">
+  <div class="mx-auto max-w-6xl px-4 sm:px-6 h-16 flex items-center justify-between">
+    <a href="#top" class="flex items-center gap-2.5">
+      <span class="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-tealx/15 border border-tealx/40">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2dd4bf" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" fill="#2dd4bf" stroke="none"/></svg>
+      </span>
+      <span class="text-xl font-extrabold tracking-tight text-white">Trip<span class="text-tealx">Budget</span></span>
+    </a>
+    <nav class="flex items-center gap-5 text-sm font-medium">
+      <a href="#top" class="text-slate-300 hover:text-tealx transition">Home</a>
+      <span class="text-slate-600">|</span>
+      <a href="https://fixoraa.tech" class="text-slate-300 hover:text-tealx transition">More Tools</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ============ TOP AD (verbatim) ============ -->
+<div class="no-print mx-auto max-w-6xl px-4 sm:px-6 pt-4" role="complementary" aria-label="Advertisement">
+  <div class="mx-auto text-center" style="max-width:728px">
+    <span class="block text-[10px] tracking-[0.18em] uppercase text-slate-400 mb-1.5">Advertisement</span>
+    <div class="flex justify-center overflow-hidden">
+      <div class="origin-top scale-[0.44] sm:scale-100 shrink-0">
+        <script>
+          atOptions = { 'key' : '4e68ac77881c17fe128a46565d9a4e8c', 'format' : 'iframe', 'height' : 90, 'width' : 728, 'params' : {} };
+        </script>
+        <script src="https://www.highrevenueformat.com/4e68ac77881c17fe128a46565d9a4e8c/invoke.js"></script>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ TOOL ============ -->
+<main>
+  <div class="mx-auto max-w-6xl px-4 sm:px-6 py-8 sm:py-12">
+
+    <div class="text-center max-w-3xl mx-auto">
+      <span class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold tracking-wide bg-tealx/10 border border-tealx/40 text-tealx uppercase">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+        Unlimited Free Usage
+      </span>
+      <h1 class="mt-4 text-3xl sm:text-5xl font-extrabold text-white tracking-tight leading-tight">
+        The <span class="text-tealx">Reverse</span> Trip Planner
+      </h1>
+      <p class="mt-3 text-slate-400 text-sm sm:text-base">
+        Don't pick a destination and pray it fits your wallet — <span class="text-white font-semibold">start with your budget</span>
+        and let TripBudget rank <span class="text-amberx font-semibold">60 destinations</span> by what you can actually afford.
+        100% offline, no sign-up, estimates with an honest 15% safety buffer.
+      </p>
+      <p class="mt-2 text-[11px] text-slate-500">Daily costs are planning estimates compiled from public travel-cost knowledge — see methodology below.</p>
+    </div>
+
+    <!-- ======= CONTROL DECK ======= -->
+    <section class="mt-8 glass border border-tealx/25 rounded-2xl p-5 sm:p-8 glow-teal" aria-label="Reverse trip planner controls">
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div>
+          <label for="budget-input" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Total trip budget (USD)</label>
+          <input id="budget-input" type="number" min="1" step="any" value="2000" placeholder="e.g. 2000"
+            class="w-full rounded-lg bg-deep border border-slate-600 px-3.5 py-2.5 text-white placeholder-slate-500 text-sm">
+        </div>
+        <div>
+          <label for="days-input" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Trip length (days)</label>
+          <input id="days-input" type="number" min="1" max="365" step="1" value="7" placeholder="e.g. 7"
+            class="w-full rounded-lg bg-deep border border-slate-600 px-3.5 py-2.5 text-white placeholder-slate-500 text-sm">
+        </div>
+        <div>
+          <label for="region-filter" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Region</label>
+          <select id="region-filter" class="w-full rounded-lg bg-deep border border-slate-600 px-3 py-2.5 text-white text-sm">
+            <option value="all">All regions</option>
+          </select>
+        </div>
+        <div class="flex items-end">
+          <button id="rank-btn"
+            class="w-full px-6 py-2.5 rounded-xl font-extrabold text-deep bg-tealx hover:bg-teal-300 transition text-sm tracking-wide">
+            RANK DESTINATIONS&nbsp;&nbsp;→
+          </button>
+        </div>
+      </div>
+      <div class="mt-4 flex items-center gap-3 rounded-xl bg-deep2/80 border border-amberx/30 px-4 py-3">
+        <input id="buffer-toggle" type="checkbox" class="switch" checked>
+        <label for="buffer-toggle" class="text-sm text-slate-300">
+          <span class="text-white font-semibold">15% error-margin buffer</span>
+          <span class="text-slate-500">— inflates every daily estimate by 15% so surprises land inside your budget, not outside it.</span>
+        </label>
+      </div>
+      <p id="rank-error" class="hidden mt-3 text-sm text-red-400 font-medium" role="alert"></p>
+    </section>
+
+    <!-- ======= RANKED RESULTS (departure-board style) ======= -->
+    <section id="results-wrap" class="hidden mt-8" aria-live="polite" aria-label="Ranked destinations">
+      <div class="flex items-baseline justify-between flex-wrap gap-2 mb-4">
+        <h2 class="text-xl sm:text-2xl font-extrabold text-white tracking-tight">
+          Where your <span id="res-budget" class="text-tealx"></span> can take you <span class="text-slate-500 text-base font-semibold">· <span id="res-days"></span> days</span>
+        </h2>
+        <p class="text-xs text-slate-500">Ranked by days affordable · tap a row to inspect it below</p>
+      </div>
+      <div id="results-list" class="space-y-2.5"></div>
+      <p class="mt-4 text-center text-[11px] text-slate-500 max-w-2xl mx-auto">
+        Estimates only: baked-in daily-cost index, no live prices, flights and visas excluded. Add the 15% buffer — it is on by default.
+      </p>
+    </section>
+
+    <!-- ======= DAYS-AFFORDABLE LIVE SLIDER ======= -->
+    <section class="mt-8 glass border border-tealx/25 rounded-2xl p-5 sm:p-8" aria-label="Days affordable explorer">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="w-7 h-7 rounded-lg bg-tealx/15 border border-tealx/40 text-tealx text-sm font-bold flex items-center justify-center">1</span>
+        <h2 class="text-white font-bold text-lg">Days-Affordable Explorer</h2>
+      </div>
+      <p class="text-xs text-slate-500 mb-5">Pick any destination, drag the slider, and watch the cost update live against your budget.</p>
+      <div class="grid md:grid-cols-2 gap-6 items-start">
+        <div>
+          <label for="dest-select" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Destination</label>
+          <select id="dest-select" class="w-full rounded-lg bg-deep border border-slate-600 px-3 py-2.5 text-white text-sm"></select>
+          <div class="mt-5">
+            <div class="flex justify-between items-baseline mb-1.5">
+              <label for="days-slider" class="text-xs font-semibold uppercase tracking-wider text-slate-400">Trip length</label>
+              <span id="days-slider-val" class="text-2xl font-extrabold text-amberx">7 days</span>
+            </div>
+            <input id="days-slider" type="range" min="1" max="60" step="1" value="7" class="w-full">
+            <div class="flex justify-between text-[11px] text-slate-500 mt-1"><span>1 day</span><span>60 days</span></div>
+          </div>
+        </div>
+        <div id="days-live-result" class="rounded-xl bg-deep2/80 border border-slate-700/60 p-5 min-h-[190px]">
+          <p class="text-[11px] uppercase tracking-widest text-slate-500 font-bold">Live estimate</p>
+          <p id="dlv-dest" class="mt-1 text-white font-bold text-lg"></p>
+          <p id="dlv-cost" class="mt-2 text-3xl font-extrabold text-tealx"></p>
+          <div class="mt-3 h-3 rounded-full bar-track overflow-hidden">
+            <div id="dlv-bar" class="h-full rounded-full bg-tealx" style="width:0%"></div>
+          </div>
+          <p id="dlv-note" class="mt-3 text-sm text-slate-300"></p>
+          <div id="dlv-breakdown" class="mt-4 space-y-1.5"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======= FLIGHT-BUDGET SPLITTER ======= -->
+    <section class="mt-8 glass border border-amberx/30 rounded-2xl p-5 sm:p-8" aria-label="Flight budget splitter">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="w-7 h-7 rounded-lg bg-amberx/15 border border-amberx/50 text-amberx text-sm font-bold flex items-center justify-center">2</span>
+        <h2 class="text-white font-bold text-lg">Flight-Budget Splitter</h2>
+      </div>
+      <p class="text-xs text-slate-500 mb-5">Flights come out of the same wallet. Enter the flight price to see what is actually left for the ground.</p>
+      <div class="grid sm:grid-cols-3 gap-4 items-end">
+        <div>
+          <label for="flight-input" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Return flight cost (USD)</label>
+          <input id="flight-input" type="number" min="0" step="any" placeholder="e.g. 450"
+            class="w-full rounded-lg bg-deep border border-slate-600 px-3.5 py-2.5 text-white placeholder-slate-500 text-sm">
+        </div>
+        <div class="sm:col-span-2">
+          <button id="split-btn"
+            class="w-full sm:w-auto px-8 py-2.5 rounded-xl font-extrabold text-deep bg-amberx hover:bg-amber-300 transition text-sm tracking-wide">
+            SPLIT MY BUDGET
+          </button>
+          <p id="split-error" class="hidden mt-2 text-sm text-red-400 font-medium" role="alert"></p>
+        </div>
+      </div>
+      <div id="split-result" class="hidden mt-5 rounded-xl bg-deep2/80 border border-slate-700/60 p-5">
+        <div class="grid sm:grid-cols-3 gap-4 text-center">
+          <div><p class="text-[11px] uppercase tracking-widest text-slate-500 font-bold">Flights</p><p id="split-flight" class="text-2xl font-extrabold text-amberx mt-1"></p></div>
+          <div><p class="text-[11px] uppercase tracking-widest text-slate-500 font-bold">Left for ground</p><p id="split-ground" class="text-2xl font-extrabold text-tealx mt-1"></p></div>
+          <div><p class="text-[11px] uppercase tracking-widest text-slate-500 font-bold">Flight share</p><p id="split-pct" class="text-2xl font-extrabold text-white mt-1"></p></div>
+        </div>
+        <div class="mt-4 h-4 rounded-full bar-track overflow-hidden flex">
+          <div id="split-bar-flight" class="h-full bg-amberx" style="width:0%"></div>
+          <div id="split-bar-ground" class="h-full bg-tealx" style="width:0%"></div>
+        </div>
+        <p id="split-note" class="mt-3 text-sm text-slate-300"></p>
+      </div>
+    </section>
+
+    <!-- ======= SAVINGS PLANNER ======= -->
+    <section class="mt-8 glass border border-tealx/25 rounded-2xl p-5 sm:p-8" aria-label="Trip savings planner">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="w-7 h-7 rounded-lg bg-tealx/15 border border-tealx/40 text-tealx text-sm font-bold flex items-center justify-center">3</span>
+        <h2 class="text-white font-bold text-lg">Savings Planner</h2>
+      </div>
+      <p class="text-xs text-slate-500 mb-5">Can't afford it yet? Set a target amount and a departure date — TripBudget tells you exactly what to save per day, week, and month.</p>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
+        <div>
+          <label for="save-target" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Target amount (USD)</label>
+          <input id="save-target" type="number" min="1" step="any" placeholder="e.g. 2500"
+            class="w-full rounded-lg bg-deep border border-slate-600 px-3.5 py-2.5 text-white placeholder-slate-500 text-sm">
+        </div>
+        <div>
+          <label for="save-saved" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Already saved (USD)</label>
+          <input id="save-saved" type="number" min="0" step="any" value="0" placeholder="0"
+            class="w-full rounded-lg bg-deep border border-slate-600 px-3.5 py-2.5 text-white placeholder-slate-500 text-sm">
+        </div>
+        <div>
+          <label for="save-date" class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Departure date</label>
+          <input id="save-date" type="date"
+            class="w-full rounded-lg bg-deep border border-slate-600 px-3.5 py-2.5 text-white text-sm">
+        </div>
+        <div>
+          <button id="save-btn"
+            class="w-full px-6 py-2.5 rounded-xl font-extrabold text-deep bg-tealx hover:bg-teal-300 transition text-sm tracking-wide">
+            PLAN MY SAVINGS
+          </button>
+        </div>
+      </div>
+      <p id="save-error" class="hidden mt-3 text-sm text-red-400 font-medium" role="alert"></p>
+      <div id="save-result" class="hidden mt-5 rounded-xl bg-deep2/80 border border-slate-700/60 p-5">
+        <div class="grid sm:grid-cols-4 gap-4 text-center">
+          <div><p class="text-[11px] uppercase tracking-widest text-slate-500 font-bold">Still needed</p><p id="save-remaining" class="text-2xl font-extrabold text-amberx mt-1"></p></div>
+          <div><p class="text-[11px] uppercase tracking-widest text-slate-500 font-bold">Per day</p><p id="save-perday" class="text-2xl font-extrabold text-tealx mt-1"></p></div>
+          <div><p class="text-[11px] uppercase tracking-widest text-slate-500 font-bold">Per week</p><p id="save-perweek" class="text-2xl font-extrabold text-tealx mt-1"></p></div>
+          <div><p class="text-[11px] uppercase tracking-widest text-slate-500 font-bold">Per month</p><p id="save-permonth" class="text-2xl font-extrabold text-tealx mt-1"></p></div>
+        </div>
+        <p id="save-note" class="mt-3 text-sm text-slate-300 text-center"></p>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<!-- ============ BOTTOM AD (verbatim) ============ -->
+<div class="no-print mx-auto max-w-6xl px-4 sm:px-6 pb-4" role="complementary" aria-label="Advertisement">
+  <div class="mx-auto text-center" style="max-width:728px">
+    <span class="block text-[10px] tracking-[0.18em] uppercase text-slate-400 mb-1.5">Advertisement</span>
+    <div class="flex justify-center overflow-hidden">
+      <script async src="https://js.wpadmngr.com/static/adManager.js" data-admpid="464498"></script>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SEO ARTICLE ============ -->
+<article id="seo-article" class="mx-auto max-w-4xl px-4 sm:px-6 py-10 sm:py-14 text-slate-300">
+  <h2 class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">Reverse Trip Planning: Start With Your Budget, Not Your Destination</h2>
+  <p class="mt-4 leading-7">Most people plan trips backwards. They fall in love with a destination, book the flight in a burst of excitement, and only then discover that the hotel, food, and daily life cost twice what they imagined. A <strong class="text-white">travel budget calculator</strong> that works the usual way — destination first, budget second — can't save you from that mistake, because by the time you run the numbers you're already emotionally committed. TripBudget flips the process: enter the money you actually have and the days you can actually travel, and it ranks 60 destinations by what fits. Planning in reverse is the single most effective way to stop overspending on travel, and almost nobody does it.</p>
+  <p class="mt-4 leading-7">The logic is simple arithmetic, but it changes every decision downstream. A $2,000 budget over 7 days means roughly $285 per day before flights. That single number instantly rules out New York and London (around $200–$220 per day on the ground alone, before the flight even lands) and opens up a long list of places where $285 a day buys comfort rather than survival. Instead of researching one destination for weeks and hoping, you compare sixty in seconds and pick from the ones your wallet already approved.</p>
+
+  <h3 class="mt-8 text-xl font-bold text-white">How this travel budget calculator works</h3>
+  <p class="mt-3 leading-7">TripBudget runs on a baked-in index of 60 destinations, each with an estimated daily cost in US dollars for a mid-range traveler: a decent hotel or guesthouse, a mix of local and mid-range meals, public transport with the occasional taxi, and roughly one paid activity per day. Divide your total budget by each destination's daily cost and you get its <strong class="text-white">days-affordable</strong> figure — the whole number of days your money covers there. The ranking sorts by that number, so the cheapest destinations float to the top and the expensive ones sink to the bottom where they belong.</p>
+  <p class="mt-4 leading-7">Two controls keep the ranking honest. The <strong class="text-white">region filter</strong> lets you constrain the comparison — planning a Southeast Asia loop is a different exercise from "anywhere on Earth" — and the <strong class="text-white">15% error-margin buffer</strong> inflates every daily estimate before the math runs. Travel costs are lumpy: one splurge dinner, one airport taxi at midnight, one museum ticket you didn't plan for. A 15% buffer is the difference between a plan that survives contact with reality and one that collapses on day three. It is on by default, and you should leave it on.</p>
+  <p class="mt-4 leading-7">Below the ranking, each destination row shows a per-category breakdown of the daily estimate: stay (about 42%), food (about 30%), transport (about 13%), and activities (about 15%). These shares describe a typical mid-range split, and they're useful because your personal split will differ. If you stay in hostels, your stay share drops and the destination gets cheaper for you than the index says. If you eat at high-end restaurants every night, food balloons and the index understates your cost. The breakdown tells you where to adjust.</p>
+
+  <h3 class="mt-8 text-xl font-bold text-white">How much does a trip to Thailand cost?</h3>
+  <p class="mt-3 leading-7">Thailand is the benchmark budget destination that every other estimate gets measured against, so let's answer the question properly: <strong class="text-white">how much does a trip to Thailand cost</strong> for a mid-range traveler? Bangkok runs about $65 per day on the ground — a comfortable 3-star hotel, street food plus a couple of sit-down meals, BTS/MRT rides and the odd Grab, and a temple or market excursion. Chiang Mai in the north is cheaper at roughly $50 a day, with guesthouses and night-market dinners stretching money further. A 7-day trip therefore lands around $455 in Bangkok or $350 in Chiang Mai for on-ground costs, before flights.</p>
+  <p class="mt-4 leading-7">Flights are the swing factor. From within Asia, a return to Bangkok can be under $150; from North America or Europe, $500–$800 is normal. That's why the <strong class="text-white">flight-budget splitter</strong> exists: a $2,000 total budget with a $600 flight leaves $1,400 on the ground — about 21 days in Bangkok or 28 in Chiang Mai at index rates. The same $2,000 with a $150 regional flight leaves $1,850, which is a meaningfully longer or more comfortable trip. When people ask how much a trip to Thailand costs, the honest answer is always two numbers: the flight, and everything after it. Most calculators merge them; separating them is what makes the answer useful.</p>
+  <p class="mt-4 leading-7">Thailand also illustrates why the buffer matters. Island transfers, national park fees, a longtail boat here and a cooking class there — Thailand is engineered to tempt you into spending. The 15% buffer on a $65 daily rate adds about $10 a day, or $70 a week, which is roughly one boat trip and one nice dinner. Budget it and enjoy it; skip it and you'll feel guilty about the exact experiences you flew there to have.</p>
+
+  <h3 class="mt-8 text-xl font-bold text-white">Cheap places to travel: where your money goes furthest</h3>
+  <p class="mt-3 leading-7">If your goal is maximum days per dollar, the <strong class="text-white">cheap places to travel</strong> cluster in South and Southeast Asia, parts of Latin America, and North Africa. At the extreme end of TripBudget's index, Pokhara in Nepal sits near $38 a day and Kathmandu around $40 — a $1,500 budget stretches past 39 days there even with the buffer on. Vietnam's Hanoi ($45) and Cambodia's Siem Reap ($45) and Phnom Penh ($45) form a natural circuit where $1,500 buys roughly a month of travel. Laos (Vientiane, $42) and Bangladesh (Dhaka, $42) are similarly priced but less touristed, which keeps costs low and experiences authentic.</p>
+  <p class="mt-4 leading-7">South Asia deserves its own note. Delhi ($55), Jaipur ($48), Mumbai ($60), and Colombo ($50) combine low daily costs with enormous cultural density — you are never paying a premium for "things to do" because history is the street you're walking on. In Latin America, the value standouts are Cusco ($55) and Bogotá ($55), Lima ($60), and Buenos Aires ($65) — cities where excellent food and rich street life cost a fraction of North American prices. North Africa offers Marrakech ($65) and Cairo ($60), where the daily estimate includes the kind of riad or Nile-view lodging that would cost triple elsewhere.</p>
+  <p class="mt-4 leading-7">Europe has its own budget tier that surprises people: Krakow ($80), Budapest ($85), and Istanbul ($90) deliver full European city-break quality — imperial architecture, thermal baths, world-class food scenes — at roughly half the daily cost of Paris ($180) or London ($200). Porto ($95) and Prague ($95) sit in the same band. The lesson of the index is not that cheap places to travel are "lesser" destinations; it's that price and quality are barely correlated in travel. Some of the world's greatest food cities are also its cheapest.</p>
+  <p class="mt-4 leading-7">A word of caution about chasing the cheapest number: daily cost is not total cost. A $38-a-day destination with a $900 flight can lose to a $65-a-day destination with a $200 flight on trips under two weeks. Always run the flight splitter before crowning a winner — the ranking shows on-ground costs, and the flight is what decides short trips.</p>
+
+  <h3 class="mt-8 text-xl font-bold text-white">Why flights deserve their own budget line</h3>
+  <p class="mt-3 leading-7">The most common budgeting error in travel is treating the flight as separate from "the trip budget" and then being shocked twice — once at checkout, once on the ground. TripBudget's <strong class="text-white">flight-budget splitter</strong> forces the two into one frame: enter the return flight price, and it shows your true on-ground budget plus the flight's share of the total. As a rule of thumb, flights consuming more than 40% of your total budget are a warning sign — you're spending nearly half your money just arriving, which usually means either a shorter trip, a closer destination, or a cheaper flight date would serve you better.</p>
+  <p class="mt-4 leading-7">This is where reverse planning earns its keep. If your flight to a dream destination eats 55% of the budget, the ranking can instantly show you what the same money buys elsewhere — often twice the days, or the same days at twice the comfort. Nobody regrets the trip they could actually afford; plenty of people regret the one they stretched for. The splitter turns a vague anxiety ("flights are expensive") into a number you can act on.</p>
+
+  <h3 class="mt-8 text-xl font-bold text-white">The days-affordable slider: from ranking to itinerary</h3>
+  <p class="mt-3 leading-7">Ranking tells you where you can go; the <strong class="text-white">days-affordable explorer</strong> tells you how long you can stay. Pick any destination and drag the slider from 1 to 60 days: the panel updates the total cost live, shows it against your budget as a progress bar, and reports the leftover or the shortfall. This is the tool for the question every traveler actually asks — "what if I stay ten days instead of seven?" — answered instantly instead of in a spreadsheet.</p>
+  <p class="mt-4 leading-7">The slider is also the fastest way to internalize the buffer's value. Toggle the 15% buffer off and on while watching a 14-day estimate: the gap is the price of your peace of mind, stated in dollars. Most travelers, seeing it, leave the buffer on. The ones who turn it off tend to be experienced budget travelers with a personal track record of beating estimates — which is exactly who should be allowed to turn it off.</p>
+
+  <h3 class="mt-8 text-xl font-bold text-white">Saving up: the savings planner</h3>
+  <p class="mt-3 leading-7">Sometimes the ranking delivers bad news: the trip you want costs more than you have. That's not the end of planning — it's the start of saving, and vague saving ("I'll put aside something each month") fails far more often than specific saving. The <strong class="text-white">savings planner</strong> takes a target amount, what you've already saved, and your departure date, then computes the required savings per day, per week, and per month. A $2,500 target with $400 saved and 180 days to go means $11.67 a day — a number small enough to automate and concrete enough to track.</p>
+  <p class="mt-4 leading-7">The per-day figure is the psychologically important one. Monthly targets feel abstract; daily targets map onto daily decisions — the coffee, the delivery order, the impulse purchase. When the daily number looks impossible, the planner is telling you something useful: move the date, lower the target (pick a cheaper destination from the ranking), or increase income. All three are legitimate plans. What doesn't work is keeping the same target, the same date, and no plan.</p>
+
+  <h3 class="mt-8 text-xl font-bold text-white">Methodology and limitations, in brief</h3>
+  <p class="mt-3 leading-7">Every daily cost in the index is an estimate compiled from public travel-cost knowledge for a mid-range traveler, rounded to the nearest $5. Costs are split into stay, food, transport, and activities at fixed shares (42/30/13/15) that represent a typical pattern, not your pattern. Flights, visas, travel insurance, shopping, and pre-trip gear are excluded from daily rates by design — that's what the splitter and your own judgment are for. Currency moves, seasons move, and festivals can double a city's prices for a week; the index is a snapshot, not a ticker.</p>
+  <p class="mt-4 leading-7">Use TripBudget as the first filter in your planning, not the last word. If the ranking says your budget covers 20 days in Vietnam, verify with a quick check of current hotel and flight prices before booking anything. The tool's job is to aim your research at destinations your budget can actually sustain — and to keep the 15% buffer between your plan and reality. Do that, and the only surprises on your trip will be the good kind.</p>
+</article>
+
+<!-- ============ FAQs ============ -->
+<section class="mx-auto max-w-4xl px-4 sm:px-6 pb-12" aria-label="Frequently asked questions">
+  <h2 class="text-2xl font-extrabold text-white tracking-tight mb-5">Frequently Asked Questions</h2>
+  <div class="space-y-3">
+    <details class="faq rounded-xl border border-slate-700/70 bg-deep2/70 px-5 py-4">
+      <summary class="text-white font-semibold">How does a reverse trip planner work?</summary>
+      <p class="mt-3 text-sm text-slate-400 leading-6">Instead of picking a destination first, you enter your total budget and trip length. TripBudget divides your budget by each of 60 destinations' estimated daily costs to compute "days affordable," then ranks them — cheapest first. The result is a shortlist of places your money already covers, with per-category cost breakdowns so you can sanity-check the numbers before you research further.</p>
+    </details>
+    <details class="faq rounded-xl border border-slate-700/70 bg-deep2/70 px-5 py-4">
+      <summary class="text-white font-semibold">How much does a trip to Thailand cost?</summary>
+      <p class="mt-3 text-sm text-slate-400 leading-6">For a mid-range traveler, Bangkok runs about $65 per day on the ground and Chiang Mai about $50 — so a 7-day trip costs roughly $455 or $350 before flights. Flights are the swing factor: under $150 return from within Asia, or $500–$800 from North America and Europe. Use the flight-budget splitter above to see what a Thailand trip really costs from your city, with the 15% buffer included.</p>
+    </details>
+    <details class="faq rounded-xl border border-slate-700/70 bg-deep2/70 px-5 py-4">
+      <summary class="text-white font-semibold">What are the cheapest places to travel on a tight budget?</summary>
+      <p class="mt-3 text-sm text-slate-400 leading-6">The cheapest places to travel in the index are Pokhara, Nepal (~$38/day), Kathmandu (~$40), Dhaka (~$42), Vientiane (~$42), and Hanoi, Siem Reap, and Phnom Penh (~$45). In Latin America, Cusco and Bogotá (~$55) lead on value; in Europe, Krakow (~$80) and Budapest (~$85). Remember that total cost includes flights — a cheap daily rate with an expensive flight can lose to a pricier destination nearby on short trips.</p>
+    </details>
+    <details class="faq rounded-xl border border-slate-700/70 bg-deep2/70 px-5 py-4">
+      <summary class="text-white font-semibold">How accurate are the daily cost estimates?</summary>
+      <p class="mt-3 text-sm text-slate-400 leading-6">They are planning estimates compiled from public travel-cost knowledge for a mid-range traveler, rounded to the nearest $5 — not live prices. Costs vary by season, neighborhood, and personal style. That's why the 15% error-margin buffer is on by default: it inflates every estimate so normal surprises (a splurge dinner, an airport taxi, a park fee) land inside your budget. Verify current hotel and flight prices before booking.</p>
+    </details>
+    <details class="faq rounded-xl border border-slate-700/70 bg-deep2/70 px-5 py-4">
+      <summary class="text-white font-semibold">How much of my travel budget should go to flights?</summary>
+      <p class="mt-3 text-sm text-slate-400 leading-6">As a rule of thumb, keep flights under 40% of your total budget. Above that, you're spending nearly half your money just arriving — the splitter above flags this with a warning. If flights eat too much, consider a closer destination, cheaper dates, or a longer trip (the flight cost spreads thinner over more days).</p>
+    </details>
+    <details class="faq rounded-xl border border-slate-700/70 bg-deep2/70 px-5 py-4">
+      <summary class="text-white font-semibold">How do I save up for a trip by a specific date?</summary>
+      <p class="mt-3 text-sm text-slate-400 leading-6">Enter your target amount, what you've already saved, and your departure date in the savings planner. It computes exactly what to save per day, per week, and per month. The per-day number is the one to watch — it's small enough to automate (a daily transfer) and concrete enough to track. If the daily figure looks impossible, move the date, pick a cheaper destination from the ranking, or raise the target savings.</p>
+    </details>
+  </div>
+</section>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "How does a reverse trip planner work?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Instead of picking a destination first, you enter your total budget and trip length. TripBudget divides your budget by each of 60 destinations' estimated daily costs to compute days affordable, then ranks them cheapest first. The result is a shortlist of places your money already covers, with per-category cost breakdowns so you can sanity-check the numbers before you research further." }
+    },
+    {
+      "@type": "Question",
+      "name": "How much does a trip to Thailand cost?",
+      "acceptedAnswer": { "@type": "Answer", "text": "For a mid-range traveler, Bangkok runs about $65 per day on the ground and Chiang Mai about $50 — so a 7-day trip costs roughly $455 or $350 before flights. Flights are the swing factor: under $150 return from within Asia, or $500–$800 from North America and Europe. Use the flight-budget splitter to see what a Thailand trip really costs from your city, with the 15% buffer included." }
+    },
+    {
+      "@type": "Question",
+      "name": "What are the cheapest places to travel on a tight budget?",
+      "acceptedAnswer": { "@type": "Answer", "text": "The cheapest places to travel in the index are Pokhara, Nepal (~$38/day), Kathmandu (~$40), Dhaka (~$42), Vientiane (~$42), and Hanoi, Siem Reap, and Phnom Penh (~$45). In Latin America, Cusco and Bogotá (~$55) lead on value; in Europe, Krakow (~$80) and Budapest (~$85). Remember that total cost includes flights — a cheap daily rate with an expensive flight can lose to a pricier destination nearby on short trips." }
+    },
+    {
+      "@type": "Question",
+      "name": "How accurate are the daily cost estimates?",
+      "acceptedAnswer": { "@type": "Answer", "text": "They are planning estimates compiled from public travel-cost knowledge for a mid-range traveler, rounded to the nearest $5 — not live prices. Costs vary by season, neighborhood, and personal style. That is why the 15% error-margin buffer is on by default: it inflates every estimate so normal surprises (a splurge dinner, an airport taxi, a park fee) land inside your budget. Verify current hotel and flight prices before booking." }
+    },
+    {
+      "@type": "Question",
+      "name": "How much of my travel budget should go to flights?",
+      "acceptedAnswer": { "@type": "Answer", "text": "As a rule of thumb, keep flights under 40% of your total budget. Above that, you are spending nearly half your money just arriving — the splitter flags this with a warning. If flights eat too much, consider a closer destination, cheaper dates, or a longer trip (the flight cost spreads thinner over more days)." }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I save up for a trip by a specific date?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Enter your target amount, what you have already saved, and your departure date in the savings planner. It computes exactly what to save per day, per week, and per month. The per-day number is the one to watch — it is small enough to automate (a daily transfer) and concrete enough to track. If the daily figure looks impossible, move the date, pick a cheaper destination from the ranking, or raise the target savings." }
+    }
+  ]
+}
+</script>
+
+<!-- ============ UI WIRING (uses the pure lib above; no lib logic here) ============ -->
+<script>
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function num(id) { var v = parseFloat($(id).value); return isNaN(v) ? NaN : v; }
+  function bufferOn() { return $('buffer-toggle').checked; }
+
+  /* ---------- populate region filter + destination select ---------- */
+  var regionSel = $('region-filter');
+  tripbudgetRegions().forEach(function (r) {
+    var o = document.createElement('option');
+    o.value = r; o.textContent = r;
+    regionSel.appendChild(o);
+  });
+
+  var destSel = $('dest-select');
+  TRIPBUDGET_DESTINATIONS.forEach(function (x, i) {
+    var o = document.createElement('option');
+    o.value = String(i);
+    o.textContent = x.n + ', ' + x.c + ' (~$' + x.d + '/day)';
+    destSel.appendChild(o);
+  });
+
+  /* ---------- ranked results ---------- */
+  function tagFor(row) {
+    if (row.affordable) {
+      if (row.leftover >= row.tripCost * 0.5) return { t: 'EASY FIT', c: '#2dd4bf' };
+      return { t: 'FITS', c: '#2dd4bf' };
+    }
+    if (row.daysAffordable >= 3) return { t: 'STRETCH', c: '#fbbf24' };
+    return { t: 'OVER BUDGET', c: '#f87171' };
+  }
+
+  function renderRank() {
+    var errEl = $('rank-error');
+    errEl.classList.add('hidden');
+    var budget = num('budget-input');
+    var days = num('days-input');
+    var errs = tripbudgetValidate(budget, days);
+    if (errs.length) {
+      errEl.textContent = errs.indexOf('invalid_budget') !== -1
+        ? 'Please enter a valid total budget above zero.'
+        : 'Please enter a valid trip length of at least 1 day.';
+      errEl.classList.remove('hidden');
+      $('results-wrap').classList.add('hidden');
+      return;
+    }
+    var region = regionSel.value;
+    var rows = tripbudgetRank(budget, days, { bufferOn: bufferOn(), region: region });
+    $('res-budget').textContent = tripbudgetFormatUSD(budget);
+    $('res-days').textContent = Math.floor(days);
+
+    var list = $('results-list');
+    list.innerHTML = '';
+    var maxCost = Math.max.apply(null, rows.map(function (r) { return r.tripCost; }).concat([1]));
+    rows.forEach(function (row, i) {
+      var tag = tagFor(row);
+      var pct = Math.min(100, (row.tripCost / maxCost) * 100);
+      var coverPct = Math.min(100, (budget / row.tripCost) * 100);
+      var div = document.createElement('div');
+      div.className = 'board-row glass border border-slate-700/60 rounded-xl px-4 py-3 flex items-center gap-3 sm:gap-4 cursor-pointer';
+      div.setAttribute('role', 'button');
+      div.setAttribute('tabindex', '0');
+      div.setAttribute('data-dest', row.name + ', ' + row.country);
+      var html = '';
+      html += '<span class="text-slate-500 font-mono text-sm w-7 shrink-0">' + String(i + 1).padStart(2, '0') + '</span>';
+      html += '<div class="flex-1 min-w-0">';
+      html += '<p class="text-white font-bold truncate">' + row.name + ' <span class="text-slate-500 font-normal text-sm">' + row.country + '</span></p>';
+      html += '<div class="mt-1.5 h-2 rounded-full bar-track overflow-hidden"><div class="h-full rounded-full" style="width:' + pct.toFixed(1) + '%;background:' + tag.c + '"></div></div>';
+      html += '<p class="mt-1 text-[11px] text-slate-500">' + tripbudgetFormatUSD(row.effectiveDaily) + '/day' + (bufferOn() ? ' <span class="text-amberx/80">(incl. 15% buffer)</span>' : '') + ' · ' + tripbudgetFormatUSD(row.tripCost) + ' for ' + Math.floor(days) + ' days</p>';
+      html += '</div>';
+      html += '<div class="text-right shrink-0">';
+      html += '<p class="text-lg font-extrabold" style="color:' + tag.c + '">' + row.daysAffordable + 'd</p>';
+      html += '<p class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">affordable</p>';
+      html += '</div>';
+      html += '<span class="hidden sm:inline-block text-[10px] font-extrabold tracking-wider px-2.5 py-1 rounded-full border shrink-0" style="color:' + tag.c + ';border-color:' + tag.c + '55;background:' + tag.c + '14">' + tag.t + '</span>';
+      div.innerHTML = html;
+      var pick = function () {
+        var idx = -1;
+        TRIPBUDGET_DESTINATIONS.forEach(function (x, j) { if (x.n === row.name && x.c === row.country) idx = j; });
+        if (idx >= 0) { destSel.value = String(idx); renderLive(); }
+        document.querySelector('section[aria-label="Days affordable explorer"]').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+      div.addEventListener('click', pick);
+      div.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      list.appendChild(div);
+    });
+    $('results-wrap').classList.remove('hidden');
+  }
+
+  $('rank-btn').addEventListener('click', renderRank);
+  $('buffer-toggle').addEventListener('change', function () {
+    if (!$('results-wrap').classList.contains('hidden')) renderRank();
+    renderLive();
+  });
+  regionSel.addEventListener('change', function () {
+    if (!$('results-wrap').classList.contains('hidden')) renderRank();
+  });
+
+  /* ---------- days-affordable live explorer ---------- */
+  function breakdownHTML(bd) {
+    var rows = [
+      ['Stay', bd.stay, '#2dd4bf'],
+      ['Food', bd.food, '#fbbf24'],
+      ['Transport', bd.transport, '#60a5fa'],
+      ['Activities', bd.activities, '#94a3b8']
+    ];
+    var html = '<p class="text-[11px] uppercase tracking-widest text-slate-500 font-bold mb-1">Est. spend split</p>';
+    rows.forEach(function (r) {
+      var pct = bd.total > 0 ? (r[1] / bd.total) * 100 : 0;
+      html += '<div class="flex items-center gap-2 text-xs text-slate-400">' +
+        '<span class="w-20 shrink-0">' + r[0] + '</span>' +
+        '<div class="flex-1 h-1.5 rounded-full bar-track overflow-hidden"><div class="h-full rounded-full" style="width:' + pct.toFixed(1) + '%;background:' + r[2] + '"></div></div>' +
+        '<span class="w-16 text-right shrink-0">' + tripbudgetFormatUSD(r[1]) + '</span></div>';
+    });
+    return html;
+  }
+
+  function renderLive() {
+    var idx = parseInt(destSel.value, 10);
+    var x = TRIPBUDGET_DESTINATIONS[idx];
+    if (!x) return;
+    var days = parseInt($('days-slider').value, 10) || 1;
+    $('days-slider-val').textContent = days + (days === 1 ? ' day' : ' days');
+    var budget = num('budget-input');
+    var bOn = bufferOn();
+    var cost = tripbudgetTripCost(x.d, days, bOn);
+    $('dlv-dest').textContent = x.n + ', ' + x.c;
+    $('dlv-cost').textContent = tripbudgetFormatUSD(cost) + ' total';
+    var note = $('dlv-note');
+    var bar = $('dlv-bar');
+    if (isFinite(budget) && budget > 0) {
+      var pct = Math.min(100, (cost / budget) * 100);
+      bar.style.width = pct + '%';
+      if (cost <= budget) {
+        bar.style.background = '#2dd4bf';
+        note.innerHTML = '<span class="text-tealx font-semibold">Fits your budget</span> with ' + tripbudgetFormatUSD(budget - cost) + ' to spare.';
+      } else {
+        bar.style.background = '#f87171';
+        note.innerHTML = '<span class="text-red-400 font-semibold">Over budget</span> by ' + tripbudgetFormatUSD(cost - budget) + '. Try fewer days or a cheaper destination.';
+      }
+    } else {
+      bar.style.width = '0%';
+      note.textContent = 'Enter your total budget above to compare.';
+    }
+    var bd = tripbudgetBreakdown(x.d, days, bOn);
+    $('dlv-breakdown').innerHTML = bd ? breakdownHTML(bd) : '';
+  }
+
+  $('days-slider').addEventListener('input', renderLive);
+  destSel.addEventListener('change', renderLive);
+  $('budget-input').addEventListener('input', function () {
+    renderLive();
+    if (!$('results-wrap').classList.contains('hidden')) renderRank();
+  });
+  $('days-input').addEventListener('input', function () {
+    if (!$('results-wrap').classList.contains('hidden')) renderRank();
+  });
+
+  /* ---------- flight-budget splitter ---------- */
+  $('split-btn').addEventListener('click', function () {
+    var errEl = $('split-error');
+    errEl.classList.add('hidden');
+    $('split-result').classList.add('hidden');
+    var budget = num('budget-input');
+    var flight = num('flight-input');
+    var r = tripbudgetSplit(budget, flight);
+    if (!r.ok) {
+      errEl.textContent = r.error === 'flight_exceeds_budget'
+        ? 'Flight cost (' + tripbudgetFormatUSD(flight) + ') exceeds your total budget (' + tripbudgetFormatUSD(budget) + ').'
+        : 'Please enter a valid budget above and a flight cost of zero or more.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+    $('split-flight').textContent = tripbudgetFormatUSD(r.flightCost);
+    $('split-ground').textContent = tripbudgetFormatUSD(r.groundBudget);
+    $('split-pct').textContent = r.flightPct.toFixed(0) + '%';
+    $('split-bar-flight').style.width = r.flightPct + '%';
+    $('split-bar-ground').style.width = r.groundPct + '%';
+    $('split-note').innerHTML = r.heavy
+      ? '<span class="text-amberx font-semibold">Warning:</span> flights eat ' + r.flightPct.toFixed(0) + '% of your budget — over the 40% rule of thumb. Consider cheaper dates, a closer destination, or a longer trip to spread the flight cost.'
+      : 'Healthy split — flights take ' + r.flightPct.toFixed(0) + '% of the budget, leaving ' + tripbudgetFormatUSD(r.groundBudget) + ' for ' + Math.floor(num('days-input') || 0) + ' days on the ground (' + tripbudgetFormatUSD(isFinite(num('days-input')) && num('days-input') > 0 ? r.groundBudget / Math.floor(num('days-input')) : 0) + '/day).';
+    $('split-result').classList.remove('hidden');
+  });
+
+  /* ---------- savings planner ---------- */
+  $('save-btn').addEventListener('click', function () {
+    var errEl = $('save-error');
+    errEl.classList.add('hidden');
+    $('save-result').classList.add('hidden');
+    var r = tripbudgetSavings(num('save-target'), num('save-saved'), $('save-date').value);
+    if (!r.ok) {
+      var msgs = {
+        invalid_target: 'Please enter a valid target amount above zero.',
+        invalid_saved: 'Please enter a valid already-saved amount (zero or more).',
+        invalid_date: 'Please pick a valid departure date.',
+        date_is_today: 'Departure is today — no time left to save. Pick a future date.',
+        date_in_past: 'That departure date is in the past. Pick a future date.'
+      };
+      errEl.textContent = msgs[r.error] || 'Could not build a savings plan. Check your inputs.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+    var note = $('save-note');
+    if (r.done) {
+      $('save-remaining').textContent = tripbudgetFormatUSD(0);
+      $('save-perday').textContent = tripbudgetFormatUSD(0);
+      $('save-perweek').textContent = tripbudgetFormatUSD(0);
+      $('save-permonth').textContent = tripbudgetFormatUSD(0);
+      note.innerHTML = '<span class="text-tealx font-semibold">You are already funded.</span> Your savings cover the target — pick a destination and go.';
+    } else {
+      $('save-remaining').textContent = tripbudgetFormatUSD(r.remaining);
+      $('save-perday').textContent = tripbudgetFormatUSD(r.perDay);
+      $('save-perweek').textContent = tripbudgetFormatUSD(r.perWeek);
+      $('save-permonth').textContent = tripbudgetFormatUSD(r.perMonth);
+      note.innerHTML = 'Save <span class="text-white font-semibold">' + tripbudgetFormatUSD(r.perDay) + ' every day</span> for the next ' + r.daysLeft + ' days. Automate a daily or weekly transfer and the target takes care of itself.';
+    }
+    $('save-result').classList.remove('hidden');
+  });
+
+  /* ---------- init ---------- */
+  renderLive();
+  renderRank();
+})();
+</script>
+</body>
+</html>
